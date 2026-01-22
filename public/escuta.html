@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8">
+  <title>AlertaVivo</title>
+</head>
+<body>
+  <h2>🚨 ALERTAVIVO – ESCUTA ATIVA</h2>
+  <p>Estamos ouvindo você agora.</p>
+
+  <button onclick="falar()">🎙️ FALAR</button>
+
+  <script>
+    async function falar() {
+      await navigator.mediaDevices.getUserMedia({ audio: true });
+      alert("Microfone ativado. Fale normalmente.");
+    }
+  </script>
+</body>
+</html>
