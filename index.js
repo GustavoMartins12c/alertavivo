@@ -2,17 +2,59 @@ import express from "express";
 import bodyParser from "body-parser";
 import axios from "axios";
 import dotenv from "dotenv";
+import pkg from "pg";
 
 dotenv.config();
+
+const { Pool } = pkg;
 
 const app = express();
 app.use(bodyParser.json());
 
+// ===============================
+// CONFIGURAÇÕES
+// ===============================
 const TOKEN = process.env.WHATSAPP_TOKEN;
 const PHONE_ID = process.env.PHONE_NUMBER_ID;
 const GRAPH = "https://graph.facebook.com/v18.0";
 
-// Verificação do webhook
+// ===============================
+// CONEXÃO COM O BANCO (POSTGRES)
+// ===============================
+const db = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false }
+});
+
+// ===============================
+// INICIALIZAÇÃO DO BANCO
+// ===============================
+async function initDatabase() {
+  try {
+    // Testa conexão
+    await db.query("SELECT 1");
+    console.log("🟢 Banco conectado com sucesso");
+
+    // Cria tabela se não existir
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS alertas (
+        id SERIAL PRIMARY KEY,
+        telefone VARCHAR(20),
+        mensagem TEXT,
+        criado_em TIMESTAMP DEFAULT NOW(),
+        status VARCHAR(20) DEFAULT 'ativo'
+      );
+    `);
+
+    console.log("🟢 Tabela 'alertas' pronta");
+  } catch (error) {
+    console.error("🔴 Erro ao inicializar banco:", error);
+  }
+}
+
+// ===============================
+// WEBHOOK - VERIFICAÇÃO (META)
+// ===============================
 app.get("/webhook", (req, res) => {
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
@@ -21,10 +63,13 @@ app.get("/webhook", (req, res) => {
   if (mode === "subscribe" && token === process.env.VERIFY_TOKEN) {
     return res.status(200).send(challenge);
   }
+
   return res.sendStatus(403);
 });
 
-// Recebe mensagens
+// ===============================
+// WEBHOOK - RECEBER MENSAGENS
+// ===============================
 app.post("/webhook", async (req, res) => {
   const msg = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
   if (!msg) return res.sendStatus(200);
@@ -44,21 +89,34 @@ app.post("/webhook", async (req, res) => {
   ];
 
   if (gatilhos.some(g => text.includes(g))) {
-    await enviarMensagem(from,
+
+    // Salva alerta no banco
+    await db.query(
+      "INSERT INTO alertas (telefone, mensagem) VALUES ($1, $2)",
+      [from, text]
+    );
+
+    // Responde ao usuário
+    await enviarMensagem(
+      from,
 `🚨 ALERTAVIVO ATIVADO
 
 Fique calmo.
-Ajuda está sendo acionada agora.
+Seu alerta foi registrado com sucesso.
 
 🎙️ Fale ao vivo:
-https://alertavivo.com.br/escuta/${from}
+https://alertavivo.onrender.com/escuta/${from}
 
-📍 Envie sua localização.`);
+📍 Envie sua localização.`
+    );
   }
 
   res.sendStatus(200);
 });
 
+// ===============================
+// FUNÇÃO PARA ENVIAR MENSAGEM
+// ===============================
 async function enviarMensagem(destino, texto) {
   await axios.post(
     `${GRAPH}/${PHONE_ID}/messages`,
@@ -75,6 +133,11 @@ async function enviarMensagem(destino, texto) {
     }
   );
 }
+
+// ===============================
+// INICIALIZA E SOBE O SERVIDOR
+// ===============================
+initDatabase();
 
 app.listen(3000, () => {
   console.log("🛡️ AlertaVivo rodando na porta 3000");
