@@ -11,31 +11,20 @@ const { Pool } = pkg;
 const app = express();
 app.use(bodyParser.json());
 
-// ===============================
-// CONFIGURAÇÕES
-// ===============================
 const TOKEN = process.env.WHATSAPP_TOKEN;
 const PHONE_ID = process.env.PHONE_NUMBER_ID;
 const GRAPH = "https://graph.facebook.com/v18.0";
 
-// ===============================
-// CONEXÃO COM O BANCO (POSTGRES)
-// ===============================
 const db = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false }
 });
 
-// ===============================
-// INICIALIZAÇÃO DO BANCO
-// ===============================
 async function initDatabase() {
   try {
-    // Testa conexão
     await db.query("SELECT 1");
     console.log("🟢 Banco conectado com sucesso");
 
-    // Cria tabela se não existir
     await db.query(`
       CREATE TABLE IF NOT EXISTS alertas (
         id SERIAL PRIMARY KEY,
@@ -52,9 +41,6 @@ async function initDatabase() {
   }
 }
 
-// ===============================
-// WEBHOOK - VERIFICAÇÃO (META)
-// ===============================
 app.get("/webhook", (req, res) => {
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
@@ -67,9 +53,6 @@ app.get("/webhook", (req, res) => {
   return res.sendStatus(403);
 });
 
-// ===============================
-// WEBHOOK - RECEBER MENSAGENS
-// ===============================
 app.post("/webhook", async (req, res) => {
   const msg = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
   if (!msg) return res.sendStatus(200);
@@ -89,14 +72,11 @@ app.post("/webhook", async (req, res) => {
   ];
 
   if (gatilhos.some(g => text.includes(g))) {
-
-    // Salva alerta no banco
     await db.query(
       "INSERT INTO alertas (telefone, mensagem) VALUES ($1, $2)",
       [from, text]
     );
 
-    // Responde ao usuário
     await enviarMensagem(
       from,
 `🚨 ALERTAVIVO ATIVADO
@@ -114,9 +94,61 @@ https://alertavivo.onrender.com/escuta/${from}
   res.sendStatus(200);
 });
 
-// ===============================
-// FUNÇÃO PARA ENVIAR MENSAGEM
-// ===============================
+app.get("/admin", async (req, res) => {
+  try {
+    const result = await db.query(
+      "SELECT * FROM alertas ORDER BY criado_em DESC LIMIT 100"
+    );
+
+    let html = `
+      <html>
+        <head>
+          <title>AlertaVivo - Painel</title>
+          <style>
+            body { font-family: Arial, sans-serif; background: #0e0e0e; color: #eaeaea; padding: 20px; }
+            h1 { color: #ff3b3b; }
+            table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+            th, td { padding: 10px; border-bottom: 1px solid #333; text-align: left; }
+            th { background: #1e1e1e; }
+            tr:hover { background: #222; }
+          </style>
+        </head>
+        <body>
+          <h1>🚨 ALERTAVIVO — PAINEL DE ALERTAS</h1>
+          <table>
+            <tr>
+              <th>ID</th>
+              <th>Telefone</th>
+              <th>Mensagem</th>
+              <th>Data</th>
+              <th>Status</th>
+            </tr>
+    `;
+
+    for (const alerta of result.rows) {
+      html += `
+        <tr>
+          <td>${alerta.id}</td>
+          <td>${alerta.telefone}</td>
+          <td>${alerta.mensagem}</td>
+          <td>${new Date(alerta.criado_em).toLocaleString()}</td>
+          <td>${alerta.status}</td>
+        </tr>
+      `;
+    }
+
+    html += `
+          </table>
+        </body>
+      </html>
+    `;
+
+    res.send(html);
+  } catch (error) {
+    res.status(500).send("Erro ao carregar painel");
+  }
+});
+
 async function enviarMensagem(destino, texto) {
   await axios.post(
     `${GRAPH}/${PHONE_ID}/messages`,
@@ -134,9 +166,6 @@ async function enviarMensagem(destino, texto) {
   );
 }
 
-// ===============================
-// INICIALIZA E SOBE O SERVIDOR
-// ===============================
 initDatabase();
 
 app.listen(3000, () => {
